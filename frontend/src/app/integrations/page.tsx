@@ -1140,35 +1140,40 @@ export default function IntegrationsPage() {
       const authToken = localStorage.getItem('auth_token')
       if (!authToken) return
 
-      // Fetch with permissions (slow, ~5-10s)
+      // Fetch with permissions AND beta integration (slow, ~5-10s)
+      // skip_permissions=false to get permissions and beta integration
       const rootlyResponse = await fetch(`${API_BASE}/rootly/integrations`, {
         headers: { 'Authorization': `Bearer ${authToken}` }
       })
 
       if (rootlyResponse.ok) {
         const rootlyData = await rootlyResponse.json()
-        const rootlyIntegrations = rootlyData.integrations || []
+        const rootlyIntegrationsWithPerms = rootlyData.integrations || []
 
-        // Update integrations with permissions data
+        console.log('Background permissions loaded:', rootlyIntegrationsWithPerms)
+
+        // Update integrations: merge permissions for existing ones, add new ones (like beta)
         setIntegrations(prevIntegrations => {
-          return prevIntegrations.map(integration => {
-            const withPermissions = rootlyIntegrations.find((r: any) => r.id === integration.id)
-            if (withPermissions?.permissions) {
-              return { ...integration, permissions: withPermissions.permissions }
+          const updatedMap = new Map(prevIntegrations.map(i => [i.id, i]))
+
+          // Update existing integrations with permissions
+          rootlyIntegrationsWithPerms.forEach((newInt: any) => {
+            if (updatedMap.has(newInt.id)) {
+              // Update existing integration with permissions
+              const existing = updatedMap.get(newInt.id)
+              updatedMap.set(newInt.id, { ...existing, permissions: newInt.permissions })
+            } else {
+              // New integration (like beta) - add it
+              updatedMap.set(newInt.id, { ...newInt, platform: 'rootly' })
             }
-            return integration
           })
+
+          return Array.from(updatedMap.values())
         })
 
-        // Update cache with permissions
-        const updatedIntegrations = integrations.map(integration => {
-          const withPermissions = rootlyIntegrations.find((r: any) => r.id === integration.id)
-          if (withPermissions?.permissions) {
-            return { ...integration, permissions: withPermissions.permissions }
-          }
-          return integration
-        })
-        localStorage.setItem('all_integrations', JSON.stringify(updatedIntegrations))
+        // Update cache with full data including beta
+        const fullIntegrations = rootlyIntegrationsWithPerms.map((i: any) => ({ ...i, platform: 'rootly' }))
+        localStorage.setItem('all_integrations', JSON.stringify(fullIntegrations))
       }
     } catch (error) {
       console.error('Failed to load permissions in background:', error)
