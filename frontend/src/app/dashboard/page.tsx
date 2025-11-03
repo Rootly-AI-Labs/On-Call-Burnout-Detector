@@ -332,28 +332,35 @@ export default function Dashboard() {
                         if (!analysis.analysis_data || !analysis.analysis_data.team_analysis) {
                           try {
                             const authToken = localStorage.getItem('auth_token')
-                            if (!authToken) return
-                            
+                            if (!authToken) {
+                              console.error('No auth token available')
+                              return
+                            }
+
+                            console.log(`Fetching full analysis data for analysis ${analysis.id}...`)
                             const response = await fetch(`${API_BASE}/analyses/${analysis.id}`, {
                               headers: {
                                 'Authorization': `Bearer ${authToken}`
                               }
                             })
-                            
+
                             if (response.ok) {
                               const fullAnalysis = await response.json()
+                              console.log('Successfully loaded full analysis:', fullAnalysis)
                               // Cache the full analysis data (whether sufficient or insufficient)
                               setAnalysisCache(prev => new Map(prev.set(analysisKey, fullAnalysis)))
                               setCurrentAnalysis(fullAnalysis)
                               setRedirectingToSuggested(false) // Turn off redirect loader
                               updateURLWithAnalysis(fullAnalysis.uuid || fullAnalysis.id)
                             } else {
+                              console.error(`Failed to fetch analysis: ${response.status} ${response.statusText}`)
                               setCurrentAnalysis(analysis)
                               setRedirectingToSuggested(false) // Turn off redirect loader
                               updateURLWithAnalysis(analysis.uuid || analysis.id)
                             }
                           } catch (error) {
-                                                setCurrentAnalysis(analysis)
+                            console.error('Error fetching analysis:', error)
+                            setCurrentAnalysis(analysis)
                             setRedirectingToSuggested(false) // Turn off redirect loader
                             updateURLWithAnalysis(analysis.uuid || analysis.id)
                           }
