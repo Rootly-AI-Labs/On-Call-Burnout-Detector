@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Simple in-memory cache for beta integration (5 minute TTL)
+_beta_integration_cache: Dict[str, tuple[Dict[str, Any], datetime]] = {}
+
+async def get_cached_beta_integration(cache_key: str) -> Dict[str, Any] | None:
+    """Get cached beta integration if still valid (5 min TTL)"""
+    if cache_key in _beta_integration_cache:
+        cached_data, cached_time = _beta_integration_cache[cache_key]
+        if datetime.now() - cached_time < timedelta(minutes=5):
+            return cached_data
+        else:
+            # Expired, remove from cache
+            del _beta_integration_cache[cache_key]
+    return None
+
+async def set_cached_beta_integration(cache_key: str, data: Dict[str, Any]):
+    """Cache beta integration for 5 minutes"""
+    _beta_integration_cache[cache_key] = (data, datetime.now())
+
 class RootlyTokenUpdate(BaseModel):
     token: str
 
@@ -302,11 +320,19 @@ async def list_integrations(
 
         logger.info(f"🔍 [ROOTLY] All permission checks completed in {time.time() - perm_start:.2f}s")
     
-    # Add beta fallback integration if available
+    # Add beta fallback integration if available (with caching for performance)
     beta_start = time.time()
     beta_rootly_token = os.getenv('ROOTLY_API_TOKEN')
     logger.info(f"🔍 [ROOTLY] Beta token check: exists={beta_rootly_token is not None}, length={len(beta_rootly_token) if beta_rootly_token else 0}")
-    if beta_rootly_token:
+
+    # Cache beta integration for 5 minutes to avoid slow API calls on every request
+    cache_key = f"beta_integration_{current_user.id}"
+    cached_beta = await get_cached_beta_integration(cache_key)
+
+    if cached_beta:
+        result_integrations.insert(0, cached_beta)
+        logger.info(f"🔍 [ROOTLY] Using cached beta integration (saved {time.time() - beta_start:.2f}s)")
+    elif beta_rootly_token:
         try:
             # Test the beta token and get organization info
             logger.info(f"🔍 [ROOTLY] Testing beta token: {beta_rootly_token[:10]}...")
@@ -358,6 +384,8 @@ async def list_integrations(
                 
                 # Add beta integration at the beginning of the list
                 result_integrations.insert(0, beta_integration)
+                # Cache for 5 minutes to avoid repeated slow API calls
+                await set_cached_beta_integration(cache_key, beta_integration)
                 logger.info(f"Added beta Rootly integration for user {current_user.id}")
             else:
                 logger.warning(f"Beta Rootly test_connection failed: {test_result}")
@@ -375,6 +403,8 @@ async def list_integrations(
                     "permissions": permissions
                 }
                 result_integrations.insert(0, beta_integration)
+                # Cache fallback too
+                await set_cached_beta_integration(cache_key, beta_integration)
                 logger.info(f"🔍 [ROOTLY] Added fallback beta Rootly integration for user {current_user.id}")
         except Exception as e:
             logger.error(f"🔍 [ROOTLY] Failed to add beta integration after {time.time() - beta_start:.2f}s: {str(e)}")
