@@ -831,23 +831,36 @@ export default function IntegrationsPage() {
       const cachedIntegrations = localStorage.getItem('all_integrations')
       const cachedGithub = localStorage.getItem('github_integration')
       const cachedSlack = localStorage.getItem('slack_integration')
-      
-      
+
+
       if (cachedIntegrations) {
         const parsedIntegrations = JSON.parse(cachedIntegrations)
+
+        // Check if cached data has permission errors - if so, don't use cache
+        const hasPermissionErrors = parsedIntegrations.some((integration: any) =>
+          integration.permissions?.users?.error || integration.permissions?.incidents?.error
+        )
+
+        if (hasPermissionErrors) {
+          // Clear bad cache and force fresh fetch
+          localStorage.removeItem('all_integrations')
+          localStorage.removeItem('all_integrations_timestamp')
+          return false
+        }
+
         setIntegrations(parsedIntegrations)
       }
-      
+
       if (cachedGithub) {
         const githubData = JSON.parse(cachedGithub)
         setGithubIntegration(githubData.connected ? githubData.integration : null)
       }
-      
+
       if (cachedSlack) {
         const slackData = JSON.parse(cachedSlack)
         setSlackIntegration(slackData.integration)
       }
-      
+
       const hasAllCache = !!(cachedIntegrations && cachedGithub && cachedSlack)
       return hasAllCache
     } catch (error) {
@@ -1070,10 +1083,22 @@ export default function IntegrationsPage() {
       setIntegrations(allIntegrations)
       setGithubIntegration(githubData.connected ? githubData.integration : null)
       setSlackIntegration(slackData.integration)
-      
-      // Cache the integrations (same as dashboard caching)
-      localStorage.setItem('all_integrations', JSON.stringify(allIntegrations))
-      localStorage.setItem('all_integrations_timestamp', Date.now().toString())
+
+      // Only cache integrations if there are no permission errors
+      // This prevents caching timeout/error states that should be retried
+      const hasPermissionErrors = allIntegrations.some((integration: any) =>
+        integration.permissions?.users?.error || integration.permissions?.incidents?.error
+      )
+
+      if (!hasPermissionErrors) {
+        // Cache the integrations (same as dashboard caching)
+        localStorage.setItem('all_integrations', JSON.stringify(allIntegrations))
+        localStorage.setItem('all_integrations_timestamp', Date.now().toString())
+      } else {
+        // Clear stale cache if we have errors - force fresh fetch next time
+        localStorage.removeItem('all_integrations')
+        localStorage.removeItem('all_integrations_timestamp')
+      }
       
       // Cache GitHub and Slack integration status separately
       localStorage.setItem('github_integration', JSON.stringify(githubData))
