@@ -241,10 +241,16 @@ async def add_rootly_integration(
 
 @router.get("/integrations")
 async def list_integrations(
+    skip_permissions: bool = False,  # New parameter to skip slow permission checks
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """List all Rootly integrations for the current user with permissions."""
+    """List all Rootly integrations for the current user with optional permissions check.
+
+    Args:
+        skip_permissions: If True, returns integrations instantly without checking permissions.
+                         Frontend can then call /integrations/permissions separately.
+    """
     import time
     start_time = time.time()
     logger.info(f"🔍 [ROOTLY] Starting list_integrations for user {current_user.id}")
@@ -274,19 +280,20 @@ async def list_integrations(
         }
         result_integrations.append(integration_data)
 
-        # Queue permission check task if token exists
-        if integration.api_token:
-            client = RootlyAPIClient(integration.api_token)
-            permission_tasks.append((idx, client.check_permissions()))
-        else:
-            # No token - set immediately
-            integration_data["permissions"] = {
-                "users": {"access": None, "error": "No API token configured"},
-                "incidents": {"access": None, "error": "No API token configured"}
-            }
+        # Queue permission check task if token exists (unless skipping)
+        if not skip_permissions:
+            if integration.api_token:
+                client = RootlyAPIClient(integration.api_token)
+                permission_tasks.append((idx, client.check_permissions()))
+            else:
+                # No token - set immediately
+                integration_data["permissions"] = {
+                    "users": {"access": None, "error": "No API token configured"},
+                    "incidents": {"access": None, "error": "No API token configured"}
+                }
 
-    # Run all permission checks in parallel with 5s timeout each
-    if permission_tasks:
+    # Run all permission checks in parallel with 5s timeout each (unless skipping)
+    if permission_tasks and not skip_permissions:
         import asyncio
         logger.info(f"🔍 [ROOTLY] Checking permissions for {len(permission_tasks)} integrations in parallel...")
         perm_start = time.time()
@@ -319,110 +326,111 @@ async def list_integrations(
                 result_integrations[idx]["permissions"] = permissions
 
         logger.info(f"🔍 [ROOTLY] All permission checks completed in {time.time() - perm_start:.2f}s")
-    
-    # Add beta fallback integration if available (with caching for performance)
-    beta_start = time.time()
-    beta_rootly_token = os.getenv('ROOTLY_API_TOKEN')
-    logger.info(f"🔍 [ROOTLY] Beta token check: exists={beta_rootly_token is not None}, length={len(beta_rootly_token) if beta_rootly_token else 0}")
 
-    # Cache beta integration for 5 minutes to avoid slow API calls on every request
-    cache_key = f"beta_integration_{current_user.id}"
-    cached_beta = await get_cached_beta_integration(cache_key)
+    # Add beta fallback integration if available (skip if skip_permissions to avoid slow API calls)
+    if not skip_permissions:
+        beta_start = time.time()
+        beta_rootly_token = os.getenv('ROOTLY_API_TOKEN')
+        logger.info(f"🔍 [ROOTLY] Beta token check: exists={beta_rootly_token is not None}, length={len(beta_rootly_token) if beta_rootly_token else 0}")
 
-    if cached_beta:
-        result_integrations.insert(0, cached_beta)
-        logger.info(f"🔍 [ROOTLY] Using cached beta integration (saved {time.time() - beta_start:.2f}s)")
-    elif beta_rootly_token:
-        try:
-            # Test the beta token and get organization info
-            logger.info(f"🔍 [ROOTLY] Testing beta token: {beta_rootly_token[:10]}...")
-            client = RootlyAPIClient(beta_rootly_token)
+        # Cache beta integration for 5 minutes to avoid slow API calls on every request
+        cache_key = f"beta_integration_{current_user.id}"
+        cached_beta = await get_cached_beta_integration(cache_key)
 
-            # Run test_connection and check_permissions in parallel
-            logger.info(f"🔍 [ROOTLY] Running test_connection() and check_permissions() in parallel...")
+        if cached_beta:
+            result_integrations.insert(0, cached_beta)
+            logger.info(f"🔍 [ROOTLY] Using cached beta integration (saved {time.time() - beta_start:.2f}s)")
+        elif beta_rootly_token:
+            try:
+                # Test the beta token and get organization info
+                logger.info(f"🔍 [ROOTLY] Testing beta token: {beta_rootly_token[:10]}...")
+                client = RootlyAPIClient(beta_rootly_token)
 
-            async def test_with_timeout():
-                try:
-                    return await asyncio.wait_for(client.test_connection(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    return {"status": "timeout", "account_info": {}}
+                # Run test_connection and check_permissions in parallel
+                logger.info(f"🔍 [ROOTLY] Running test_connection() and check_permissions() in parallel...")
 
-            async def perms_with_timeout():
-                try:
-                    return await asyncio.wait_for(client.check_permissions(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    return {
-                        "users": {"access": None, "error": "Rootly API timeout"},
-                        "incidents": {"access": None, "error": "Rootly API timeout"}
+                async def test_with_timeout():
+                    try:
+                        return await asyncio.wait_for(client.test_connection(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        return {"status": "timeout", "account_info": {}}
+
+                async def perms_with_timeout():
+                    try:
+                        return await asyncio.wait_for(client.check_permissions(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        return {
+                            "users": {"access": None, "error": "Rootly API timeout"},
+                            "incidents": {"access": None, "error": "Rootly API timeout"}
+                        }
+
+                test_result, permissions = await asyncio.gather(
+                    test_with_timeout(),
+                    perms_with_timeout()
+                )
+                logger.info(f"🔍 [ROOTLY] Beta checks completed in {time.time() - beta_start:.2f}s")
+
+                logger.info(f"Beta Rootly test_result: {test_result}")
+                account_info = test_result.get("account_info", {})
+                logger.info(f"Beta Rootly account_info: {account_info}")
+                org_name = account_info.get("organization_name") or test_result.get("organization_name") or "Beta Organization"
+                logger.info(f"Resolved organization name: {org_name}")
+
+                if test_result.get("status") == "success":
+                    beta_integration = {
+                        "id": "beta-rootly",  # Special ID for beta integration
+                        "name": "Rootly (Beta Access)",
+                        "organization_name": org_name,
+                        "total_users": account_info.get("total_users", 0),
+                        "is_default": True,
+                        "is_beta": True,  # Special flag to indicate beta integration
+                        "created_at": datetime.now().isoformat(),
+                        "last_used_at": None,
+                        "token_suffix": f"***{beta_rootly_token[-4:]}",
+                        "permissions": permissions
                     }
 
-            test_result, permissions = await asyncio.gather(
-                test_with_timeout(),
-                perms_with_timeout()
-            )
-            logger.info(f"🔍 [ROOTLY] Beta checks completed in {time.time() - beta_start:.2f}s")
-            
-            logger.info(f"Beta Rootly test_result: {test_result}")
-            account_info = test_result.get("account_info", {})
-            logger.info(f"Beta Rootly account_info: {account_info}")
-            org_name = account_info.get("organization_name") or test_result.get("organization_name") or "Beta Organization"
-            logger.info(f"Resolved organization name: {org_name}")
-            
-            if test_result.get("status") == "success":
-                beta_integration = {
-                    "id": "beta-rootly",  # Special ID for beta integration
-                    "name": "Rootly (Beta Access)",
-                    "organization_name": org_name,
-                    "total_users": account_info.get("total_users", 0),
-                    "is_default": True,
-                    "is_beta": True,  # Special flag to indicate beta integration
-                    "created_at": datetime.now().isoformat(),
-                    "last_used_at": None,
-                    "token_suffix": f"***{beta_rootly_token[-4:]}",
-                    "permissions": permissions
-                }
-                
-                # Add beta integration at the beginning of the list
-                result_integrations.insert(0, beta_integration)
-                # Cache for 5 minutes to avoid repeated slow API calls
-                await set_cached_beta_integration(cache_key, beta_integration)
-                logger.info(f"Added beta Rootly integration for user {current_user.id}")
-            else:
-                logger.warning(f"Beta Rootly test_connection failed: {test_result}")
-                # Add fallback integration with limited info
+                    # Add beta integration at the beginning of the list
+                    result_integrations.insert(0, beta_integration)
+                    # Cache for 5 minutes to avoid repeated slow API calls
+                    await set_cached_beta_integration(cache_key, beta_integration)
+                    logger.info(f"Added beta Rootly integration for user {current_user.id}")
+                else:
+                    logger.warning(f"Beta Rootly test_connection failed: {test_result}")
+                    # Add fallback integration with limited info
+                    beta_integration = {
+                        "id": "beta-rootly",
+                        "name": "Rootly (Beta Access)",
+                        "organization_name": org_name,
+                        "total_users": account_info.get("total_users", 0),
+                        "is_default": True,
+                        "is_beta": True,
+                        "created_at": datetime.now().isoformat(),
+                        "last_used_at": None,
+                        "token_suffix": f"***{beta_rootly_token[-4:]}",
+                        "permissions": permissions
+                    }
+                    result_integrations.insert(0, beta_integration)
+                    # Cache fallback too
+                    await set_cached_beta_integration(cache_key, beta_integration)
+                    logger.info(f"🔍 [ROOTLY] Added fallback beta Rootly integration for user {current_user.id}")
+            except Exception as e:
+                logger.error(f"🔍 [ROOTLY] Failed to add beta integration after {time.time() - beta_start:.2f}s: {str(e)}")
+                # Add fallback integration even on exception
                 beta_integration = {
                     "id": "beta-rootly",
                     "name": "Rootly (Beta Access)",
-                    "organization_name": org_name,
-                    "total_users": account_info.get("total_users", 0),
+                    "organization_name": "Beta Organization",
+                    "total_users": 0,
                     "is_default": True,
                     "is_beta": True,
                     "created_at": datetime.now().isoformat(),
                     "last_used_at": None,
-                    "token_suffix": f"***{beta_rootly_token[-4:]}",
-                    "permissions": permissions
+                    "token_suffix": "***BETA",
+                    "permissions": {}
                 }
                 result_integrations.insert(0, beta_integration)
-                # Cache fallback too
-                await set_cached_beta_integration(cache_key, beta_integration)
-                logger.info(f"🔍 [ROOTLY] Added fallback beta Rootly integration for user {current_user.id}")
-        except Exception as e:
-            logger.error(f"🔍 [ROOTLY] Failed to add beta integration after {time.time() - beta_start:.2f}s: {str(e)}")
-            # Add fallback integration even on exception
-            beta_integration = {
-                "id": "beta-rootly",
-                "name": "Rootly (Beta Access)",
-                "organization_name": "Beta Organization",
-                "total_users": 0,
-                "is_default": True,
-                "is_beta": True,
-                "created_at": datetime.now().isoformat(),
-                "last_used_at": None,
-                "token_suffix": "***BETA",
-                "permissions": {}
-            }
-            result_integrations.insert(0, beta_integration)
-            logger.info(f"🔍 [ROOTLY] Added exception fallback beta Rootly integration for user {current_user.id}")
+                logger.info(f"🔍 [ROOTLY] Added exception fallback beta Rootly integration for user {current_user.id}")
 
     total_time = time.time() - start_time
     logger.info(f"🔍 [ROOTLY] COMPLETE: Returning {len(result_integrations)} integrations, total time: {total_time:.2f}s")
