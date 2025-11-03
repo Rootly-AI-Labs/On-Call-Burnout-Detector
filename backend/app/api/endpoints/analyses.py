@@ -61,11 +61,15 @@ class AnalysisSummaryResponse(BaseModel):
 
     # Summary data only (excludes raw_incident_data, individual_daily_data)
     team_health: Optional[dict] = None       # Overall score and risk level only
+    team_analysis: Optional[dict] = None     # Member details (needed for dashboard display)
     team_summary: Optional[dict] = None      # Member counts, risk distribution
     daily_trends: Optional[List[dict]] = None # For charts
     period_summary: Optional[dict] = None    # Time range stats
     insights: Optional[List[dict]] = None    # Key insights
     metadata: Optional[dict] = None          # Config and analysis info
+    data_sources: Optional[dict] = None      # Data source status
+    github_insights: Optional[dict] = None   # GitHub activity stats
+    slack_insights: Optional[dict] = None    # Slack activity stats
 
 
 class AnalysisListResponse(BaseModel):
@@ -107,11 +111,13 @@ def extract_summary_from_analysis(analysis: Analysis) -> AnalysisSummaryResponse
     Extract condensed summary from analysis results, excluding heavy data.
 
     Excludes:
-    - raw_incident_data (can be 100s-1000s of incidents)
-    - individual_daily_data (daily breakdown per member)
-    - team_analysis.members (full member details)
+    - raw_incident_data (can be 100s-1000s of incidents with full details)
+    - individual_daily_data (daily breakdown per member - can be 30+ days × members)
 
-    Returns only what's needed for dashboard initial load.
+    Includes team_analysis.members since dashboard needs member CBI scores for display.
+    Members data is relatively small (typically <100 members × ~10 fields each).
+
+    Returns what's needed for dashboard initial load.
     """
     results = analysis.results or {}
 
@@ -121,14 +127,17 @@ def extract_summary_from_analysis(analysis: Analysis) -> AnalysisSummaryResponse
         team_health = {
             'overall_score': team_health.get('overall_score'),
             'risk_level': team_health.get('risk_level'),
-            'health_percentage': team_health.get('health_percentage')
+            'health_percentage': team_health.get('health_percentage'),
+            'risk_distribution': team_health.get('risk_distribution')
         }
 
+    # Extract team_analysis (keep members - needed for dashboard display)
+    team_analysis = results.get('team_analysis')
+
     # Extract team_summary (counts only)
-    team_analysis = results.get('team_analysis', {})
     team_summary = None
     if team_analysis:
-        members = team_analysis.get('members', [])
+        members = team_analysis.get('members', []) if isinstance(team_analysis, dict) else team_analysis
         if not members and isinstance(team_analysis, list):
             members = team_analysis  # Handle array format
 
@@ -142,8 +151,22 @@ def extract_summary_from_analysis(analysis: Analysis) -> AnalysisSummaryResponse
             'total_members': len(members),
             'high_risk_count': risk_counts.get('high', 0),
             'medium_risk_count': risk_counts.get('medium', 0),
-            'low_risk_count': risk_counts.get('low', 0)
+            'low_risk_count': risk_counts.get('low', 0),
+            'risk_distribution': risk_counts
         }
+
+    # Extract metadata with incident/severity info
+    metadata = results.get('metadata', {})
+    if not metadata:
+        metadata = {}
+
+    # Ensure we include needed metadata fields
+    if 'time_range' not in metadata:
+        metadata['time_range'] = analysis.time_range or 30
+    if 'platform' not in metadata:
+        metadata['platform'] = analysis.platform
+    if 'config' not in metadata:
+        metadata['config'] = analysis.config
 
     return AnalysisSummaryResponse(
         id=analysis.id,
@@ -156,15 +179,15 @@ def extract_summary_from_analysis(analysis: Analysis) -> AnalysisSummaryResponse
         completed_at=analysis.completed_at,
         time_range=analysis.time_range or 30,
         team_health=team_health,
+        team_analysis=team_analysis,
         team_summary=team_summary,
         daily_trends=results.get('daily_trends'),
         period_summary=results.get('period_summary'),
         insights=results.get('insights'),
-        metadata={
-            'time_range': analysis.time_range or 30,
-            'platform': analysis.platform,
-            'config': analysis.config
-        }
+        metadata=metadata,
+        data_sources=results.get('data_sources'),
+        github_insights=results.get('github_insights'),
+        slack_insights=results.get('slack_insights')
     )
 
 
