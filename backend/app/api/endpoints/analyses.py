@@ -34,17 +34,38 @@ class AnalysisResponse(BaseModel):
     id: int
     uuid: Optional[str]
     integration_id: Optional[int]
-    
+
     # NEW: Integration details stored directly with analysis (optional for backward compatibility)
     integration_name: Optional[str] = None  # "PagerDuty (Beta Access)", "Failwhale Tales", etc.
     platform: Optional[str] = None          # "rootly", "pagerduty"
-    
+
     status: str
     created_at: datetime
     completed_at: Optional[datetime]
     time_range: int
     analysis_data: Optional[dict]
     config: Optional[dict]
+
+
+class AnalysisSummaryResponse(BaseModel):
+    """Condensed analysis response for dashboard performance - excludes heavy data like raw incidents"""
+    id: int
+    uuid: Optional[str]
+    integration_id: Optional[int]
+    integration_name: Optional[str] = None
+    platform: Optional[str] = None
+    status: str
+    created_at: datetime
+    completed_at: Optional[datetime]
+    time_range: int
+
+    # Summary data only (excludes raw_incident_data, individual_daily_data)
+    team_health: Optional[dict] = None       # Overall score and risk level only
+    team_summary: Optional[dict] = None      # Member counts, risk distribution
+    daily_trends: Optional[List[dict]] = None # For charts
+    period_summary: Optional[dict] = None    # Time range stats
+    insights: Optional[List[dict]] = None    # Key insights
+    metadata: Optional[dict] = None          # Config and analysis info
 
 
 class AnalysisListResponse(BaseModel):
@@ -79,6 +100,72 @@ class HistoricalTrendsResponse(BaseModel):
     timeline_events: List[TimelineEvent]
     summary: Dict[str, Any]
     date_range: Dict[str, str]
+
+
+def extract_summary_from_analysis(analysis: Analysis) -> AnalysisSummaryResponse:
+    """
+    Extract condensed summary from analysis results, excluding heavy data.
+
+    Excludes:
+    - raw_incident_data (can be 100s-1000s of incidents)
+    - individual_daily_data (daily breakdown per member)
+    - team_analysis.members (full member details)
+
+    Returns only what's needed for dashboard initial load.
+    """
+    results = analysis.results or {}
+
+    # Extract team_health (overall score only)
+    team_health = results.get('team_health')
+    if team_health:
+        team_health = {
+            'overall_score': team_health.get('overall_score'),
+            'risk_level': team_health.get('risk_level'),
+            'health_percentage': team_health.get('health_percentage')
+        }
+
+    # Extract team_summary (counts only)
+    team_analysis = results.get('team_analysis', {})
+    team_summary = None
+    if team_analysis:
+        members = team_analysis.get('members', [])
+        if not members and isinstance(team_analysis, list):
+            members = team_analysis  # Handle array format
+
+        # Count risk levels
+        risk_counts = {'low': 0, 'medium': 0, 'high': 0}
+        for member in members:
+            risk = member.get('risk_level', 'low')
+            risk_counts[risk] = risk_counts.get(risk, 0) + 1
+
+        team_summary = {
+            'total_members': len(members),
+            'high_risk_count': risk_counts.get('high', 0),
+            'medium_risk_count': risk_counts.get('medium', 0),
+            'low_risk_count': risk_counts.get('low', 0)
+        }
+
+    return AnalysisSummaryResponse(
+        id=analysis.id,
+        uuid=getattr(analysis, 'uuid', None),
+        integration_id=analysis.rootly_integration_id,
+        integration_name=analysis.integration_name,
+        platform=analysis.platform,
+        status=analysis.status,
+        created_at=analysis.created_at,
+        completed_at=analysis.completed_at,
+        time_range=analysis.time_range or 30,
+        team_health=team_health,
+        team_summary=team_summary,
+        daily_trends=results.get('daily_trends'),
+        period_summary=results.get('period_summary'),
+        insights=results.get('insights'),
+        metadata={
+            'time_range': analysis.time_range or 30,
+            'platform': analysis.platform,
+            'config': analysis.config
+        }
+    )
 
 
 @router.post("/run", response_model=AnalysisResponse)
@@ -417,13 +504,23 @@ async def get_analysis_by_uuid(
     )
 
 
-@router.get("/{analysis_id}", response_model=AnalysisResponse)
+@router.get("/{analysis_id}")
 async def get_analysis(
     analysis_id: int,
+    summary: bool = Query(False, description="Return condensed summary without heavy data (raw_incident_data, individual_daily_data)"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get a specific analysis result."""
+    """
+    Get a specific analysis result.
+
+    Args:
+        analysis_id: Analysis ID
+        summary: If True, returns condensed summary for fast dashboard loading.
+                 If False, returns full analysis data including raw incidents.
+
+    Returns condensed payload (50KB) when summary=True vs full data (500KB-5MB) when summary=False.
+    """
     # Simplified: Filter by user_id only (no organization_id requirement)
     # TODO: Re-enable organization_id filtering after multi-tenant migration is stable
     analysis = db.query(Analysis).filter(
@@ -447,16 +544,20 @@ async def get_analysis(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_detail
         )
-    
+
+    # Return summary or full data based on query parameter
+    if summary:
+        return extract_summary_from_analysis(analysis)
+
     return AnalysisResponse(
         id=analysis.id,
         uuid=getattr(analysis, 'uuid', None),
         integration_id=analysis.rootly_integration_id,
-        
+
         # Include new integration fields
         integration_name=analysis.integration_name,
         platform=analysis.platform,
-        
+
         status=analysis.status,
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
@@ -476,13 +577,14 @@ def is_uuid(value: str) -> bool:
         return False
 
 
-@router.get("/by-id/{analysis_identifier}", response_model=AnalysisResponse)
+@router.get("/by-id/{analysis_identifier}")
 async def get_analysis_by_identifier(
     analysis_identifier: str,
+    summary: bool = Query(False, description="Return condensed summary without heavy data"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get a specific analysis result by UUID or integer ID."""
+    """Get a specific analysis result by UUID or integer ID. Supports summary mode for faster loading."""
     if not current_user.organization_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -525,21 +627,25 @@ async def get_analysis_by_identifier(
         if most_recent:
             most_recent_id = getattr(most_recent, 'uuid', None) or most_recent.id
             error_detail = f"Analysis not found. Most recent analysis available: {most_recent_id}"
-        
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_detail
         )
-    
+
+    # Return summary or full data based on query parameter
+    if summary:
+        return extract_summary_from_analysis(analysis)
+
     return AnalysisResponse(
         id=analysis.id,
         uuid=getattr(analysis, 'uuid', None),
         integration_id=analysis.rootly_integration_id,
-        
+
         # Include new integration fields
         integration_name=analysis.integration_name,
         platform=analysis.platform,
-        
+
         status=analysis.status,
         created_at=analysis.created_at,
         completed_at=analysis.completed_at,
