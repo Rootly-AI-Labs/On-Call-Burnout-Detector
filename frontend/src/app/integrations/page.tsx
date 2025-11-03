@@ -143,6 +143,7 @@ export default function IntegrationsPage() {
   const [loadingPagerDuty, setLoadingPagerDuty] = useState(true)
   const [loadingGitHub, setLoadingGitHub] = useState(true)
   const [loadingSlack, setLoadingSlack] = useState(true)
+  const [loadingPermissions, setLoadingPermissions] = useState(false) // Separate loader for permissions
   const [reloadingIntegrations, setReloadingIntegrations] = useState(false)
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null)
   const [activeTab, setActiveTab] = useState<"rootly" | "pagerduty" | null>(null)
@@ -1123,6 +1124,53 @@ export default function IntegrationsPage() {
       setLoadingGitHub(false)
       setLoadingSlack(false)
       isLoadingRef.current = false
+
+      // Fetch permissions in background after fast load completes
+      loadPermissionsInBackground()
+    }
+  }
+
+  // Load permissions separately in background (non-blocking)
+  const loadPermissionsInBackground = async () => {
+    setLoadingPermissions(true)
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) return
+
+      // Fetch with permissions (slow, ~5-10s)
+      const rootlyResponse = await fetch(`${API_BASE}/rootly/integrations`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      })
+
+      if (rootlyResponse.ok) {
+        const rootlyData = await rootlyResponse.json()
+        const rootlyIntegrations = rootlyData.integrations || []
+
+        // Update integrations with permissions data
+        setIntegrations(prevIntegrations => {
+          return prevIntegrations.map(integration => {
+            const withPermissions = rootlyIntegrations.find((r: any) => r.id === integration.id)
+            if (withPermissions?.permissions) {
+              return { ...integration, permissions: withPermissions.permissions }
+            }
+            return integration
+          })
+        })
+
+        // Update cache with permissions
+        const updatedIntegrations = integrations.map(integration => {
+          const withPermissions = rootlyIntegrations.find((r: any) => r.id === integration.id)
+          if (withPermissions?.permissions) {
+            return { ...integration, permissions: withPermissions.permissions }
+          }
+          return integration
+        })
+        localStorage.setItem('all_integrations', JSON.stringify(updatedIntegrations))
+      }
+    } catch (error) {
+      console.error('Failed to load permissions in background:', error)
+    } finally {
+      setLoadingPermissions(false)
     }
   }
 
@@ -2069,7 +2117,12 @@ export default function IntegrationsPage() {
                           </div>
 
                           {/* Permissions for Rootly and PagerDuty */}
-                          {integration.permissions && (
+                          {loadingPermissions && !integration.permissions ? (
+                            <div className="mt-3 flex items-center space-x-2 text-sm text-gray-500">
+                              <div className="animate-spin h-4 w-4 border-2 border-purple-500 border-t-transparent rounded-full"></div>
+                              <span>Checking permissions...</span>
+                            </div>
+                          ) : integration.permissions ? (
                             <>
                               <div className="mt-3 flex items-center space-x-4 text-sm">
                                 <span className="text-gray-500">Read permissions:</span>
@@ -2111,7 +2164,7 @@ export default function IntegrationsPage() {
                                 </div>
                               )}
                             </>
-                          )}
+                          ) : null}
                         </div>
                         
                         <div className="flex items-center">
