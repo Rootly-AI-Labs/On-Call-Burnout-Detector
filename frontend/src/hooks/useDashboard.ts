@@ -587,7 +587,12 @@ export default function useDashboard() {
 
       // Check cache first
       const cachedAnalysis = analysisCache.get(analysisId)
-      if (cachedAnalysis && cachedAnalysis.analysis_data && cachedAnalysis.analysis_data.team_analysis) {
+      // Check for both summary format (team_analysis at root) and old format (analysis_data.team_analysis)
+      const hasTeamData = cachedAnalysis && (
+        (cachedAnalysis as any).team_analysis ||
+        (cachedAnalysis.analysis_data && cachedAnalysis.analysis_data.team_analysis)
+      )
+      if (hasTeamData) {
         setCurrentAnalysis(cachedAnalysis)
         setRedirectingToSuggested(false)
         return
