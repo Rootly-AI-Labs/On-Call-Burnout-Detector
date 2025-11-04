@@ -885,38 +885,38 @@ export default function useDashboard() {
               // Fall through to fetch fresh data below
             } else {
               setIntegrations(cached)
-            
-            // Also load GitHub and Slack from cache if available
-            const cachedGithub = localStorage.getItem('github_integration')
-            const cachedSlack = localStorage.getItem('slack_integration')
-            
-            if (cachedGithub) {
-              const githubData = JSON.parse(cachedGithub)
-              if (githubData.connected && githubData.integration) {
-                setGithubIntegration(githubData.integration)
-              } else {
-                setGithubIntegration(null)
+
+              // Also load GitHub and Slack from cache if available
+              const cachedGithub = localStorage.getItem('github_integration')
+              const cachedSlack = localStorage.getItem('slack_integration')
+
+              if (cachedGithub) {
+                const githubData = JSON.parse(cachedGithub)
+                if (githubData.connected && githubData.integration) {
+                  setGithubIntegration(githubData.integration)
+                } else {
+                  setGithubIntegration(null)
+                }
               }
-            }
-            
-            if (cachedSlack) {
-              const slackData = JSON.parse(cachedSlack)
-              if (slackData.connected && slackData.integration) {
-                setSlackIntegration(slackData.integration)
-              } else {
-                setSlackIntegration(null)
+
+              if (cachedSlack) {
+                const slackData = JSON.parse(cachedSlack)
+                if (slackData.connected && slackData.integration) {
+                  setSlackIntegration(slackData.integration)
+                } else {
+                  setSlackIntegration(null)
+                }
               }
-            }
-            
-            // Set integration based on saved preference
-            const savedOrg = localStorage.getItem('selected_organization')
-            if (savedOrg && cached.find((i: Integration) => i.id.toString() === savedOrg)) {
-              setSelectedIntegration(savedOrg)
-            } else if (cached.length > 0) {
-              setSelectedIntegration(cached[0].id.toString())
-              localStorage.setItem('selected_organization', cached[0].id.toString())
-            }
-            
+
+              // Set integration based on saved preference
+              const savedOrg = localStorage.getItem('selected_organization')
+              if (savedOrg && cached.find((i: Integration) => i.id.toString() === savedOrg)) {
+                setSelectedIntegration(savedOrg)
+              } else if (cached.length > 0) {
+                setSelectedIntegration(cached[0].id.toString())
+                localStorage.setItem('selected_organization', cached[0].id.toString())
+              }
+
               // Set loading to false when using cache
               setLoadingIntegrations(false)
               setHasDataFromCache(true)
