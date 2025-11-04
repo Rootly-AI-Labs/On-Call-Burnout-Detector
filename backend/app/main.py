@@ -68,12 +68,17 @@ def get_cors_origins():
             "http://localhost:3002"
         ])
     
-    # TEMPORARY: Allow localhost for OAuth testing (remove after testing)
-    if not any("localhost" in origin for origin in origins):
-        origins.extend([
+    # Always allow localhost in development environment
+    env = os.getenv("ENVIRONMENT", "development")
+    if env in ["development", "dev", "staging"]:
+        localhost_origins = [
             "http://localhost:3000",
-            "http://localhost:3001"
-        ])
+            "http://localhost:3001",
+            "http://localhost:3002"
+        ]
+        for localhost_origin in localhost_origins:
+            if localhost_origin not in origins:
+                origins.append(localhost_origin)
     
     # Add production domains if they exist
     production_frontend = os.getenv("PRODUCTION_FRONTEND_URL")
