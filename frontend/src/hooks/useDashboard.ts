@@ -1756,10 +1756,20 @@ export default function useDashboard() {
     const needsLoad = integrations.length === 0
     const needsPermissions = integrations.length > 0 && integrations.some(i => i.permissions === undefined)
 
+    console.log('ensureIntegrationsLoaded:', {
+      integrationsCount: integrations.length,
+      needsLoad,
+      needsPermissions,
+      integrationSample: integrations[0],
+      dropdownLoading
+    })
+
     if ((needsLoad || needsPermissions) && !dropdownLoading) {
       setDropdownLoading(true)
       try {
+        console.log('Fetching integrations with permissions...')
         await loadIntegrations(true, false) // Force refresh, no global loading
+        console.log('Integrations loaded, new count:', integrations.length)
       } finally {
         setDropdownLoading(false)
       }
