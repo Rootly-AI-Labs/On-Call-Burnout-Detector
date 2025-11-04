@@ -178,6 +178,13 @@ export default function useDashboard() {
       // Support both formats: summary format (data at root) and old format (data under analysis_data)
       const analysisData: any = currentAnalysis.analysis_data || currentAnalysis
 
+      console.log('shouldShowInsufficientDataCard check:', {
+        hasAnalysisData: !!currentAnalysis.analysis_data,
+        hasTeamHealth: !!analysisData?.team_health,
+        hasTeamAnalysis: !!analysisData?.team_analysis,
+        analysisId: currentAnalysis.id
+      })
+
       // Check if we have team_health or team_summary data but with no meaningful content
       if (analysisData?.team_health || analysisData?.team_summary) {
         // Check if the analysis has 0 members - this indicates insufficient data
