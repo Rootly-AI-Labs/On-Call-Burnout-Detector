@@ -1253,59 +1253,27 @@ export default function useDashboard() {
   }
 
   const startAnalysis = async () => {
-    // Ensure integrations with permissions are loaded
+    // Ensure integrations with permissions are loaded BEFORE opening dialog
     await ensureIntegrationsLoaded()
 
+    // Get integrations from cache after ensuring they're loaded with permissions
+    const cachedIntegrations = localStorage.getItem('all_integrations')
     let currentIntegrations = integrations
 
-    // Check if we have basic integrations cached
+    // If we just loaded integrations, get them from cache which is more up-to-date than state
+    if (cachedIntegrations) {
+      const cached = JSON.parse(cachedIntegrations)
+      const rootlyIntegrations = Array.isArray(cached) ? cached.filter((i: any) => i.platform === 'rootly') : []
+      const pagerdutyIntegrations = Array.isArray(cached) ? cached.filter((i: any) => i.platform === 'pagerduty') : []
+      currentIntegrations = rootlyIntegrations.concat(pagerdutyIntegrations)
+      // Update state with fresh data including permissions
+      setIntegrations(currentIntegrations)
+    }
+
+    // Only show error if we still don't have any integrations after loading
     if (currentIntegrations.length === 0) {
-      // Check if we have cached data in localStorage first
-      const cachedIntegrations = localStorage.getItem('all_integrations')
-      const cacheTimestamp = localStorage.getItem('all_integrations_timestamp')
-      
-      if (cachedIntegrations && cacheTimestamp) {
-        const cacheAge = Date.now() - parseInt(cacheTimestamp)
-        if (cacheAge < 5 * 60 * 1000) { // 5 minutes
-          // Load from cache without API call
-          const cached = JSON.parse(cachedIntegrations)
-          const rootlyIntegrations = Array.isArray(cached.rootly) ? cached.rootly : []
-          const pagerdutyIntegrations = Array.isArray(cached.pagerduty) ? cached.pagerduty : []
-          const loadedIntegrations = rootlyIntegrations.concat(pagerdutyIntegrations)
-          setIntegrations(loadedIntegrations)
-          setGithubIntegration(cached.github?.connected ? cached.github.integration : null)
-          setSlackIntegration(cached.slack?.integration || null)
-          currentIntegrations = loadedIntegrations
-        } else {
-          // Cache is stale, need to load fresh data
-          await loadIntegrations(true, false) // Force refresh but don't show global loading
-          // After async load, get the updated integrations from state or cache
-          const freshCachedIntegrations = localStorage.getItem('all_integrations')
-          if (freshCachedIntegrations) {
-            const cached = JSON.parse(freshCachedIntegrations)
-            const rootlyIntegrations = Array.isArray(cached.rootly) ? cached.rootly : []
-            const pagerdutyIntegrations = Array.isArray(cached.pagerduty) ? cached.pagerduty : []
-            currentIntegrations = rootlyIntegrations.concat(pagerdutyIntegrations)
-          }
-        }
-      } else {
-        // No cache, need to load fresh data  
-        await loadIntegrations(true, false) // Force refresh but don't show global loading
-        // After async load, get the updated integrations from cache
-        const freshCachedIntegrations = localStorage.getItem('all_integrations')
-        if (freshCachedIntegrations) {
-          const cached = JSON.parse(freshCachedIntegrations)
-          const rootlyIntegrations = Array.isArray(cached.rootly) ? cached.rootly : []
-          const pagerdutyIntegrations = Array.isArray(cached.pagerduty) ? cached.pagerduty : []
-          currentIntegrations = rootlyIntegrations.concat(pagerdutyIntegrations)
-        }
-      }
-      
-      // Only show error if we still don't have any integrations after loading
-      if (currentIntegrations.length === 0) {
-        toast.error("No integrations found - please add an integration first")
-        return
-      }
+      toast.error("No integrations found - please add an integration first")
+      return
     }
 
     // Always check localStorage for the latest selected organization
