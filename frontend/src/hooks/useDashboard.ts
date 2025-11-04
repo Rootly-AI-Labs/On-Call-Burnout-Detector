@@ -135,52 +135,81 @@ export default function useDashboard() {
     }
   }
 
+  // Helper function to normalize analysis format - wraps summary data into analysis_data if needed
+  const normalizeAnalysisFormat = (analysis: any) => {
+    if (!analysis) return analysis
+
+    // If analysis_data already exists, return as-is
+    if (analysis.analysis_data) return analysis
+
+    // If we have summary data at root (team_analysis, team_health, etc), wrap it into analysis_data
+    if (analysis.team_analysis || analysis.team_health || analysis.team_summary) {
+      return {
+        ...analysis,
+        analysis_data: {
+          team_analysis: analysis.team_analysis,
+          team_health: analysis.team_health,
+          team_summary: analysis.team_summary,
+          daily_trends: analysis.daily_trends,
+          period_summary: analysis.period_summary,
+          insights: analysis.insights,
+          metadata: analysis.metadata,
+          data_sources: analysis.data_sources,
+          github_insights: analysis.github_insights,
+          slack_insights: analysis.slack_insights,
+          partial_data: analysis.partial_data,
+          recommendations: analysis.recommendations,
+        }
+      }
+    }
+
+    return analysis
+  }
+
   // Helper function to determine if insufficient data card should be shown
   const shouldShowInsufficientDataCard = () => {
     if (!currentAnalysis || analysisRunning) return false
-    
+
     // Show for failed analyses
     if (currentAnalysis.status === 'failed') return true
-    
+
     // Show for completed analyses with no meaningful data
     if (currentAnalysis.status === 'completed') {
-      // Check if analysis_data is completely missing
-      if (!currentAnalysis.analysis_data) {
-        return true
-      }
-      
+      // Support both formats: summary format (data at root) and old format (data under analysis_data)
+      const analysisData: any = currentAnalysis.analysis_data || currentAnalysis
+
       // Check if we have team_health or team_summary data but with no meaningful content
-      if (currentAnalysis.analysis_data?.team_health || currentAnalysis.analysis_data?.team_summary) {
+      if (analysisData?.team_health || analysisData?.team_summary) {
         // Check if the analysis has 0 members - this indicates insufficient data
-        const teamAnalysis = currentAnalysis.analysis_data.team_analysis
-        
+        const teamAnalysis = analysisData.team_analysis
+
         // Handle both array format (team_analysis directly) and object format (team_analysis.members)
         const members = Array.isArray(teamAnalysis) ? teamAnalysis : teamAnalysis?.members
         const hasNoMembers = !members || members.length === 0
-        
+
         if (hasNoMembers) {
           return true // Show insufficient data card
         }
-        
+
         return false // Has meaningful data - even if 0 incidents, show normal dashboard
       }
-      
+
       // If we have partial data with incidents/users, show the partial data UI
-      if (currentAnalysis.analysis_data?.partial_data) {
+      if (analysisData?.partial_data) {
         return false
       }
-      
+
       // If we have team_analysis with members, we have data
-      const teamAnalysis = currentAnalysis.analysis_data?.team_analysis
+      const teamAnalysis = analysisData?.team_analysis
       const members = Array.isArray(teamAnalysis) ? teamAnalysis : teamAnalysis?.members
       if (members && members.length > 0) {
         return false
       }
-      
+
       // Otherwise, insufficient data
       return true
     }
-    
+
     return false
   }
 
@@ -507,10 +536,12 @@ export default function useDashboard() {
             // Deduplicate analyses by ID to prevent duplicate keys
             const existingIds = new Set(prev.map(a => a.id))
             const uniqueNewAnalyses = newAnalyses.filter((analysis: any) => !existingIds.has(analysis.id))
-            return [...prev, ...uniqueNewAnalyses]
+            // Normalize all analyses to ensure consistent format
+            return [...prev, ...uniqueNewAnalyses.map(normalizeAnalysisFormat)]
           })
         } else {
-          setPreviousAnalyses(newAnalyses)
+          // Normalize all analyses to ensure consistent format
+          setPreviousAnalyses(newAnalyses.map(normalizeAnalysisFormat))
         }
 
         setTotalAnalysesCount(data.total || newAnalyses.length)
@@ -523,7 +554,7 @@ export default function useDashboard() {
 
           if (!analysisId && data.analyses && data.analyses.length > 0 && !currentAnalysis) {
             const mostRecentAnalysis = data.analyses[0] // Analyses should be ordered by created_at desc
-            setCurrentAnalysis(mostRecentAnalysis)
+            setCurrentAnalysis(normalizeAnalysisFormat(mostRecentAnalysis))
             // Platform mappings will be fetched by the dedicated useEffect
           }
         }
@@ -593,7 +624,7 @@ export default function useDashboard() {
         (cachedAnalysis.analysis_data && cachedAnalysis.analysis_data.team_analysis)
       )
       if (hasTeamData) {
-        setCurrentAnalysis(cachedAnalysis)
+        setCurrentAnalysis(normalizeAnalysisFormat(cachedAnalysis))
         setRedirectingToSuggested(false)
         return
       }
@@ -612,10 +643,11 @@ export default function useDashboard() {
 
       if (response.ok) {
         const analysis = await response.json()
-        // Cache the analysis data
-        const cacheKey = analysis.uuid || analysis.id.toString()
-        setAnalysisCache(prev => new Map(prev.set(cacheKey, analysis)))
-        setCurrentAnalysis(analysis)
+        // Normalize and cache the analysis data
+        const normalizedAnalysis = normalizeAnalysisFormat(analysis)
+        const cacheKey = normalizedAnalysis.uuid || normalizedAnalysis.id.toString()
+        setAnalysisCache(prev => new Map(prev.set(cacheKey, normalizedAnalysis)))
+        setCurrentAnalysis(normalizedAnalysis)
         // Platform mappings will be fetched by the dedicated useEffect
         // Turn off redirect loader since we successfully loaded the analysis
         setRedirectingToSuggested(false)
@@ -1498,7 +1530,7 @@ export default function useDashboard() {
       setCurrentRunningAnalysisId(null)
             setCurrentRunningAnalysisId(null)
                   setCurrentRunningAnalysisId(null)
-                  setCurrentAnalysis(analysisData)
+                  setCurrentAnalysis(normalizeAnalysisFormat(analysisData))
                   setRedirectingToSuggested(false) // Turn off redirect loader
                   updateURLWithAnalysis(analysisData.uuid || analysisData.id)
                 }, 500) // Show 100% for just 0.5 seconds before showing data
@@ -1516,7 +1548,7 @@ export default function useDashboard() {
               
               // Check if we have partial data to display
               if (analysisData.analysis_data?.partial_data) {
-                setCurrentAnalysis(analysisData)
+                setCurrentAnalysis(normalizeAnalysisFormat(analysisData))
                 updateURLWithAnalysis(analysisData.uuid)
                 toast("Analysis completed with partial data")
                 await loadPreviousAnalyses()

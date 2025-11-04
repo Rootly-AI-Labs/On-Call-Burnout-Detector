@@ -708,7 +708,7 @@ export default function Dashboard() {
           />
 
           {/* Analysis Complete State - Only show if analysis has meaningful data */}
-          {!shouldShowInsufficientDataCard() && !analysisRunning && currentAnalysis && (currentAnalysis.analysis_data?.team_health || currentAnalysis.analysis_data?.team_summary || currentAnalysis.analysis_data?.partial_data || currentAnalysis.analysis_data?.team_analysis) && (
+          {!shouldShowInsufficientDataCard() && !analysisRunning && currentAnalysis && currentAnalysis.analysis_data && (
             <>
               {/* Debug Section - Development Only */}
               {false && process.env.NODE_ENV === 'development' && (
