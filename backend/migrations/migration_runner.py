@@ -433,9 +433,24 @@ class MigrationRunner:
                     """
                 ]
             },
+            {
+                "name": "013_backfill_organization_id_to_analyses",
+                "description": "Backfill organization_id to old analyses from their user's organization",
+                "sql": [
+                    """
+                    -- Update analyses to have the same organization_id as their user
+                    UPDATE analyses a
+                    SET organization_id = u.organization_id
+                    FROM users u
+                    WHERE a.user_id = u.id
+                    AND a.organization_id IS NULL
+                    AND u.organization_id IS NOT NULL
+                    """
+                ]
+            },
             # Add future migrations here with incrementing numbers
             # {
-            #     "name": "011_add_user_preferences",
+            #     "name": "014_add_user_preferences",
             #     "description": "Add user preferences table",
             #     "sql": ["CREATE TABLE IF NOT EXISTS user_preferences (...)"]
             # }
