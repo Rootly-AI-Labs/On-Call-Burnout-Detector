@@ -1253,6 +1253,8 @@ export default function useDashboard() {
   }
 
   const startAnalysis = async () => {
+    console.log('startAnalysis called - loading integrations with permissions...')
+
     // Ensure integrations with permissions are loaded BEFORE opening dialog
     await ensureIntegrationsLoaded()
 
@@ -1260,12 +1262,18 @@ export default function useDashboard() {
     const cachedIntegrations = localStorage.getItem('all_integrations')
     let currentIntegrations = integrations
 
+    console.log('After ensureIntegrationsLoaded, integrations state:', integrations.length)
+
     // If we just loaded integrations, get them from cache which is more up-to-date than state
     if (cachedIntegrations) {
       const cached = JSON.parse(cachedIntegrations)
       const rootlyIntegrations = Array.isArray(cached) ? cached.filter((i: any) => i.platform === 'rootly') : []
       const pagerdutyIntegrations = Array.isArray(cached) ? cached.filter((i: any) => i.platform === 'pagerduty') : []
       currentIntegrations = rootlyIntegrations.concat(pagerdutyIntegrations)
+
+      console.log('Loaded from cache:', currentIntegrations.length, 'integrations')
+      console.log('First integration permissions:', currentIntegrations[0]?.permissions)
+
       // Update state with fresh data including permissions
       setIntegrations(currentIntegrations)
 
