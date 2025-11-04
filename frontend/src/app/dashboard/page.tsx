@@ -318,15 +318,21 @@ export default function Dashboard() {
                       onClick={async () => {
                         const analysisKey = analysis.uuid || analysis.id.toString()
 
+                        console.log(`Click on analysis ${analysis.id}, key: ${analysisKey}`)
+                        console.log('Cache has keys:', Array.from(analysisCache.keys()))
+
                         // Check cache first
                         const cachedAnalysis = analysisCache.get(analysisKey)
                         if (cachedAnalysis) {
+                          console.log('Using cached analysis!')
                           // Use cached analysis data (includes both sufficient and insufficient data cases)
                           setCurrentAnalysis(cachedAnalysis)
                           setRedirectingToSuggested(false) // Turn off redirect loader
                           updateURLWithAnalysis(cachedAnalysis.uuid || cachedAnalysis.id)
                           return
                         }
+
+                        console.log('Cache miss, will fetch...')
 
                         // If analysis doesn't have full data and not in cache, fetch it
                         if (!analysis.analysis_data || !analysis.analysis_data.team_analysis) {
