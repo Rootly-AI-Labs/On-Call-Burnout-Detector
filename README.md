@@ -1,1 +1,1 @@
-Moved to [https://github.com/Rootly-AI-Labs/On-Call-Health](Moved to https://github.com/Rootly-AI-Labs/On-Call-Health)
+Moved to [https://github.com/Rootly-AI-Labs/On-Call-Health](https://github.com/Rootly-AI-Labs/On-Call-Health)
