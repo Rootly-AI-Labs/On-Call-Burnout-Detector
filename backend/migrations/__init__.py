@@ -1,1 +1,0 @@
-# Migration system for Rootly Burnout Detector
